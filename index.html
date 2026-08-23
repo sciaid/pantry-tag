@@ -1,0 +1,485 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1">
+<meta name="theme-color" content="#14181C">
+<title>Pantry Tag · Barcode Inventory</title>
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icon-192.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html5-qrcode/2.3.8/html5-qrcode.min.js"></script>
+<style>
+  :root{
+    --bg: #14181C;
+    --surface: #1E242A;
+    --surface-2: #262E35;
+    --text: #F5F3EE;
+    --muted: #8A9199;
+    --add: #4C9A6A;
+    --add-dim: #2E4A3A;
+    --sub: #C0704A;
+    --sub-dim: #4A342A;
+    --mono: 'IBM Plex Mono', ui-monospace, monospace;
+    --sans: 'Space Grotesk', ui-sans-serif, system-ui, sans-serif;
+  }
+  @font-face{
+    font-family:'Space Grotesk';
+    src: local('Space Grotesk');
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { height: 100%; }
+  body{
+    margin:0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    overflow: hidden;
+    display:flex;
+    flex-direction:column;
+    height:100dvh;
+  }
+  #camera-wrap{
+    position:relative;
+    flex: 1 1 auto;
+    min-height: 0;
+    background: #000;
+    overflow:hidden;
+  }
+  #reader{ width:100%; height:100%; }
+  #reader video{ width:100% !important; height:100% !important; object-fit:cover; }
+  /* hide the library's default UI chrome, we build our own */
+  #reader__scan_region { border:none !important; }
+  #reader__dashboard_section_csr, #reader__dashboard_section_swaplink, #reader__status_span { display:none !important; }
+  #reader__header_message { display:none !important; }
+
+  .viewfinder-frame{
+    position:absolute; inset:0;
+    pointer-events:none;
+    display:flex; align-items:center; justify-content:center;
+  }
+  .viewfinder-frame .box{
+    width: min(70vw, 320px);
+    height: 34%;
+    border: 2px solid rgba(245,243,238,0.55);
+    border-radius: 12px;
+    box-shadow: 0 0 0 2000px rgba(0,0,0,0.35);
+  }
+
+  .top-bar{
+    position:absolute; top:0; left:0; right:0;
+    padding: max(14px, env(safe-area-inset-top)) 16px 14px;
+    display:flex; align-items:center; justify-content:space-between;
+    background: linear-gradient(180deg, rgba(0,0,0,0.55), transparent);
+    z-index: 5;
+  }
+  .brand{
+    font-weight:700; font-size:15px; letter-spacing:0.02em;
+    display:flex; align-items:center; gap:8px;
+  }
+  .brand .dot{ width:8px; height:8px; border-radius:2px; background:var(--add); }
+  .status-pill{
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--muted);
+    background: rgba(255,255,255,0.08);
+    padding: 5px 10px;
+    border-radius: 20px;
+  }
+
+  #sheet{
+    flex: 0 0 auto;
+    background: var(--surface);
+    border-top-left-radius: 20px;
+    border-top-right-radius: 20px;
+    padding: 18px 18px calc(18px + env(safe-area-inset-bottom));
+    box-shadow: 0 -8px 30px rgba(0,0,0,0.4);
+    z-index: 6;
+    transition: transform 0.25s ease;
+  }
+  .handle{
+    width:36px; height:4px; background:var(--surface-2); border-radius:2px;
+    margin: 0 auto 14px;
+  }
+
+  .idle-state{
+    text-align:center;
+    padding: 6px 0 4px;
+    color: var(--muted);
+    font-size: 14px;
+  }
+  .idle-state strong{ color: var(--text); }
+
+  .product-card{ display:none; }
+  .product-card.active{ display:block; }
+
+  .product-name{
+    font-size: 17px;
+    font-weight: 700;
+    margin: 0 0 2px;
+    line-height:1.3;
+  }
+  .product-meta{
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--muted);
+    margin-bottom: 14px;
+  }
+  .qty-row{
+    display:flex; align-items:baseline; gap:8px;
+    font-family: var(--mono);
+    margin-bottom: 16px;
+  }
+  .qty-row .label{ font-size:11px; color:var(--muted); text-transform:uppercase; letter-spacing:0.08em; }
+  .qty-row .val{ font-size:20px; font-weight:600; }
+
+  /* the flip tag toggle — signature element */
+  .flip-tag{
+    display:flex;
+    border-radius: 12px;
+    overflow:hidden;
+    background: var(--surface-2);
+    margin-bottom: 14px;
+    height: 56px;
+    position: relative;
+  }
+  .flip-tag button{
+    flex:1;
+    border:none;
+    background:transparent;
+    color: var(--muted);
+    font-family: var(--sans);
+    font-weight:700;
+    font-size:15px;
+    letter-spacing:0.03em;
+    display:flex; align-items:center; justify-content:center;
+    gap:8px;
+    cursor:pointer;
+    transition: color 0.15s ease;
+    -webkit-user-select:none; user-select:none;
+  }
+  .flip-tag .slider{
+    position:absolute;
+    top:4px; bottom:4px; left:4px;
+    width: calc(50% - 4px);
+    border-radius: 9px;
+    background: var(--add-dim);
+    transition: transform 0.25s cubic-bezier(.4,0,.2,1), background 0.25s ease;
+    z-index:0;
+  }
+  .flip-tag.mode-subtract .slider{
+    transform: translateX(calc(100% + 0px));
+    background: var(--sub-dim);
+  }
+  .flip-tag button span.ic{ font-size:16px; }
+  .flip-tag button.active-add{ color: var(--add); }
+  .flip-tag button.active-sub{ color: var(--sub); }
+  .flip-tag button, .flip-tag .slider{ z-index:1; }
+  .flip-tag .slider{ z-index:0; }
+
+  .confirm-btn{
+    width:100%;
+    border:none;
+    border-radius: 12px;
+    padding: 16px;
+    font-family: var(--sans);
+    font-weight:700;
+    font-size:16px;
+    letter-spacing:0.02em;
+    cursor:pointer;
+    background: var(--add);
+    color: #0C1210;
+    transition: background 0.2s ease, transform 0.1s ease;
+  }
+  .confirm-btn:active{ transform: scale(0.98); }
+  .confirm-btn.mode-subtract{ background: var(--sub); color:#1C110A; }
+  .confirm-btn:disabled{ opacity:0.5; cursor:default; }
+
+  .rescan-link{
+    display:block;
+    text-align:center;
+    margin-top: 12px;
+    font-size: 13px;
+    color: var(--muted);
+    background:none; border:none;
+    font-family: var(--sans);
+    cursor:pointer;
+    padding: 6px;
+  }
+
+  .toast{
+    position:fixed; left:50%; bottom:28px; transform: translateX(-50%) translateY(20px);
+    background: var(--surface-2);
+    color: var(--text);
+    padding: 10px 18px;
+    border-radius: 10px;
+    font-size: 13px;
+    font-family: var(--mono);
+    opacity:0;
+    transition: opacity 0.25s ease, transform 0.25s ease;
+    z-index: 20;
+    pointer-events:none;
+    max-width: 85vw;
+    text-align:center;
+  }
+  .toast.show{ opacity:1; transform: translateX(-50%) translateY(0); }
+  .toast.error{ background: var(--sub-dim); }
+  .toast.success{ background: var(--add-dim); }
+
+  #setup-gate{
+    position:fixed; inset:0; background:var(--bg); z-index:50;
+    display:flex; flex-direction:column; align-items:center; justify-content:center;
+    padding: 24px;
+    text-align:center;
+  }
+  #setup-gate.hidden{ display:none; }
+  #setup-gate input{
+    width:100%; max-width:340px;
+    background: var(--surface);
+    border: 1px solid var(--surface-2);
+    color: var(--text);
+    padding: 12px 14px;
+    border-radius: 10px;
+    font-family: var(--mono);
+    font-size: 13px;
+    margin: 16px 0;
+  }
+  #setup-gate button{
+    background: var(--add); color:#0C1210; border:none;
+    padding: 12px 24px; border-radius: 10px; font-weight:700;
+    font-family: var(--sans); cursor:pointer; font-size:15px;
+  }
+  #setup-gate p{ color: var(--muted); font-size: 13px; max-width: 320px; line-height:1.5; }
+  #setup-gate .title{ font-weight:700; font-size:18px; margin-bottom: 4px; }
+</style>
+</head>
+<body>
+
+<div id="setup-gate">
+  <div class="title">One-time setup</div>
+  <p>Paste the Google Apps Script Web App URL for your shared inventory sheet. This is saved on this device only.</p>
+  <input id="script-url-input" type="url" placeholder="https://script.google.com/macros/s/.../exec">
+  <button id="save-url-btn">Save & continue</button>
+  <p style="margin-top:18px; font-size:12px;">Don't have this yet? See SETUP.md in the project files.</p>
+</div>
+
+<div id="camera-wrap">
+  <div class="top-bar">
+    <div class="brand"><span class="dot"></span> Pantry Tag</div>
+    <div class="status-pill" id="status-pill">point at barcode</div>
+  </div>
+  <div id="reader"></div>
+  <div class="viewfinder-frame"><div class="box"></div></div>
+</div>
+
+<div id="sheet">
+  <div class="handle"></div>
+
+  <div class="idle-state" id="idle-state">
+    Scan a food item's barcode to <strong>add</strong> or <strong>subtract</strong> it from the shared list.
+  </div>
+
+  <div class="product-card" id="product-card">
+    <div class="product-name" id="product-name">—</div>
+    <div class="product-meta" id="product-meta">—</div>
+    <div class="qty-row">
+      <span class="label">Current qty</span>
+      <span class="val" id="current-qty">—</span>
+    </div>
+
+    <div class="flip-tag mode-add" id="flip-tag">
+      <div class="slider"></div>
+      <button id="btn-add" class="active-add"><span class="ic">＋</span> Add</button>
+      <button id="btn-sub"><span class="ic">－</span> Subtract</button>
+    </div>
+
+    <button class="confirm-btn" id="confirm-btn">Confirm add</button>
+    <button class="rescan-link" id="rescan-btn">Scan a different item</button>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const STORAGE_KEY = 'pantry_tag_script_url';
+const OFF_API = 'https://world.openfoodfacts.org/api/v2/product/';
+
+let scriptUrl = localStorage.getItem(STORAGE_KEY);
+let currentMode = 'add';
+let currentBarcode = null;
+let currentProductName = null;
+let scannerRunning = true;
+let html5QrCode;
+
+const setupGate = document.getElementById('setup-gate');
+const idleState = document.getElementById('idle-state');
+const productCard = document.getElementById('product-card');
+const productName = document.getElementById('product-name');
+const productMeta = document.getElementById('product-meta');
+const currentQtyEl = document.getElementById('current-qty');
+const flipTag = document.getElementById('flip-tag');
+const btnAdd = document.getElementById('btn-add');
+const btnSub = document.getElementById('btn-sub');
+const confirmBtn = document.getElementById('confirm-btn');
+const rescanBtn = document.getElementById('rescan-btn');
+const statusPill = document.getElementById('status-pill');
+const toastEl = document.getElementById('toast');
+
+if (scriptUrl) {
+  setupGate.classList.add('hidden');
+} else {
+  setupGate.classList.remove('hidden');
+}
+
+document.getElementById('save-url-btn').addEventListener('click', () => {
+  const val = document.getElementById('script-url-input').value.trim();
+  if (!val.startsWith('https://script.google.com/')) {
+    showToast('That doesn\'t look like a script.google.com URL', 'error');
+    return;
+  }
+  localStorage.setItem(STORAGE_KEY, val);
+  scriptUrl = val;
+  setupGate.classList.add('hidden');
+  startScanner();
+});
+
+function showToast(msg, kind) {
+  toastEl.textContent = msg;
+  toastEl.className = 'toast show' + (kind ? ' ' + kind : '');
+  setTimeout(() => { toastEl.className = 'toast'; }, 2600);
+}
+
+function setMode(mode) {
+  currentMode = mode;
+  flipTag.classList.toggle('mode-subtract', mode === 'subtract');
+  btnAdd.classList.toggle('active-add', mode === 'add');
+  btnSub.classList.toggle('active-sub', mode === 'subtract');
+  confirmBtn.classList.toggle('mode-subtract', mode === 'subtract');
+  confirmBtn.textContent = mode === 'add' ? 'Confirm add' : 'Confirm subtract';
+}
+btnAdd.addEventListener('click', () => setMode('add'));
+btnSub.addEventListener('click', () => setMode('subtract'));
+
+async function onScanSuccess(decodedText) {
+  if (!scannerRunning) return;
+  scannerRunning = false;
+  statusPill.textContent = 'looking up…';
+  currentBarcode = decodedText;
+
+  let name = null;
+  try {
+    const res = await fetch(OFF_API + decodedText + '.json');
+    const data = await res.json();
+    if (data.status === 1 && data.product) {
+      name = data.product.product_name || data.product.generic_name || null;
+    }
+  } catch (e) { /* offline or lookup failed — still allow manual entry */ }
+
+  currentProductName = name || ('Unknown item');
+  productName.textContent = currentProductName;
+  productMeta.textContent = decodedText + (name ? '' : ' · not found in product database');
+  currentQtyEl.textContent = '…';
+
+  idleState.style.display = 'none';
+  productCard.classList.add('active');
+  setMode('add');
+  statusPill.textContent = 'scanned';
+
+  fetchCurrentQty(decodedText);
+}
+
+async function fetchCurrentQty(barcode) {
+  try {
+    const url = scriptUrl + '?barcode=' + encodeURIComponent(barcode);
+    const res = await fetch(url);
+    const data = await res.json();
+    currentQtyEl.textContent = (typeof data.quantity === 'number') ? data.quantity : '0 (new item)';
+  } catch (e) {
+    currentQtyEl.textContent = '?';
+  }
+}
+
+confirmBtn.addEventListener('click', async () => {
+  confirmBtn.disabled = true;
+  confirmBtn.textContent = 'Saving…';
+  try {
+    const res = await fetch(scriptUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain' }, // text/plain avoids CORS preflight on Apps Script
+      body: JSON.stringify({
+        barcode: currentBarcode,
+        productName: currentProductName,
+        action: currentMode
+      })
+    });
+    const data = await res.json();
+    if (data.ok) {
+      showToast(
+        (currentMode === 'add' ? 'Added — ' : 'Subtracted — ') + currentProductName + ' now ' + data.quantity,
+        'success'
+      );
+      resetToScan();
+    } else {
+      showToast(data.error || 'Something went wrong', 'error');
+      confirmBtn.disabled = false;
+      setMode(currentMode);
+    }
+  } catch (e) {
+    showToast('Could not reach the sheet. Check your connection.', 'error');
+    confirmBtn.disabled = false;
+    setMode(currentMode);
+  }
+});
+
+rescanBtn.addEventListener('click', resetToScan);
+
+function resetToScan() {
+  productCard.classList.remove('active');
+  idleState.style.display = 'block';
+  confirmBtn.disabled = false;
+  statusPill.textContent = 'point at barcode';
+  currentBarcode = null;
+  currentProductName = null;
+  scannerRunning = true;
+}
+
+function startScanner() {
+  html5QrCode = new Html5Qrcode('reader');
+  const config = {
+    fps: 12,
+    qrbox: undefined,
+    formatsToSupport: [
+      Html5QrcodeSupportedFormats.EAN_13,
+      Html5QrcodeSupportedFormats.EAN_8,
+      Html5QrcodeSupportedFormats.UPC_A,
+      Html5QrcodeSupportedFormats.UPC_E,
+      Html5QrcodeSupportedFormats.CODE_128
+    ]
+  };
+  Html5Qrcode.getCameras().then(cameras => {
+    const backCam = cameras.find(c => /back|rear|environment/i.test(c.label)) || cameras[cameras.length - 1];
+    html5QrCode.start(
+      backCam ? backCam.id : { facingMode: 'environment' },
+      config,
+      onScanSuccess
+    ).catch(err => {
+      statusPill.textContent = 'camera error';
+      showToast('Camera error: ' + err, 'error');
+    });
+  }).catch(err => {
+    statusPill.textContent = 'no camera access';
+    showToast('Camera permission is needed to scan barcodes', 'error');
+  });
+}
+
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('sw.js').catch(() => {});
+  });
+}
+
+if (scriptUrl) startScanner();
+</script>
+</body>
+</html>
